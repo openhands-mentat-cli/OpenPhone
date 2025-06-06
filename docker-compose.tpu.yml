@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  openphone-tpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.tpu
+    ports:
+      - "12000:12000"
+      - "5900:5900"  
+      - "6080:6080"
+      - "5554-5584:5554-5584"  # Range for multiple emulators
+    environment:
+      # TPU Configuration
+      - TPU_NAME=${TPU_NAME:-openphone-tpu}
+      - TPU_ZONE=${TPU_ZONE:-us-central1-b}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/gcp-key.json
+      
+      # Performance Settings
+      - ANDROID_EMULATOR_USE_SYSTEM_LIBS=1
+      - ANDROID_SDK_ROOT=/opt/android-sdk
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - QT_QPA_PLATFORM=offscreen
+      
+      # OpenPhone Settings
+      - MAX_PHONES=${MAX_PHONES:-10}
+      - ENABLE_GPU_ACCELERATION=true
+      - ENABLE_TPU_ACCELERATION=true
+      - LOG_LEVEL=INFO
+      
+    volumes:
+      # Mount credentials securely (DO NOT commit credentials to repo)
+      - ./credentials:/app/credentials:ro
+      - openphone-data:/app/data
+      - android-sdk-cache:/opt/android-sdk
+      
+    privileged: true
+    devices:
+      - /dev/kvm:/dev/kvm  # For hardware acceleration
+      
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:12000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Monitoring service
+  monitoring:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  # Grafana for visualizations
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=openphone-admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+
+volumes:
+  openphone-data:
+  android-sdk-cache:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  default:
+    name: openphone-network

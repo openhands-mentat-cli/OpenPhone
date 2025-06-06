@@ -1,0 +1,198 @@
+# TPU-Optimized OpenPhone System
+FROM tensorflow/tensorflow:2.14.0-gpu
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies for Android emulation + TPU support
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    unzip \
+    openjdk-11-jdk \
+    xvfb \
+    x11vnc \
+    websockify \
+    qemu-kvm \
+    libvirt-daemon-system \
+    libvirt-clients \
+    bridge-utils \
+    cpu-checker \
+    adb \
+    fastboot \
+    python3-dev \
+    python3-pip \
+    nodejs \
+    npm \
+    git \
+    htop \
+    nano \
+    net-tools \
+    procps \
+    # TPU and acceleration libraries
+    libnvidia-compute-470 \
+    nvidia-cuda-toolkit \
+    libgl1-mesa-glx \
+    libglu1-mesa \
+    libxrandr2 \
+    libxss1 \
+    libxcursor1 \
+    libxcomposite1 \
+    libasound2 \
+    libxi6 \
+    libxtst6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Install Google Cloud SDK for TPU access
+RUN curl https://sdk.cloud.google.com | bash
+ENV PATH="/root/google-cloud-sdk/bin:${PATH}"
+
+# Install TPU libraries
+RUN pip3 install --upgrade \
+    google-cloud-tpu \
+    tensorflow-cloud \
+    cloud-tpu-client \
+    tensorboard \
+    tensorboard-plugin-profile
+
+# Set up Android SDK with TPU optimizations
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV PATH=${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator
+
+# TPU Environment Variables
+ENV TPU_NAME=""
+ENV TPU_ZONE="us-central1-b"
+ENV USE_TPU=true
+ENV XLA_FLAGS="--xla_gpu_cuda_data_dir=/usr/lib/cuda"
+
+# Create Android SDK directory
+RUN mkdir -p ${ANDROID_HOME}
+
+# Download and install Android SDK Command Line Tools
+RUN cd ${ANDROID_HOME} && \
+    wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip && \
+    unzip -q commandlinetools-linux-9477386_latest.zip && \
+    mkdir -p cmdline-tools/latest && \
+    mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true && \
+    rm commandlinetools-linux-9477386_latest.zip
+
+# Accept Android SDK licenses and install packages with TPU optimizations
+RUN yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses && \
+    ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+    "platform-tools" \
+    "platforms;android-34" \
+    "platforms;android-33" \
+    "platforms;android-32" \
+    "platforms;android-31" \
+    "emulator" \
+    "system-images;android-34;google_apis;x86_64" \
+    "system-images;android-33;google_apis;x86_64" \
+    "system-images;android-32;google_apis;x86_64" \
+    "system-images;android-31;google_apis;x86_64"
+
+# Create working directory
+WORKDIR /app
+
+# Copy and install backend dependencies
+COPY backend/package*.json ./backend/
+RUN cd backend && npm install --production
+
+# Copy and build frontend
+COPY frontend/package*.json ./frontend/
+RUN cd frontend && npm install
+COPY frontend/ ./frontend/
+RUN cd frontend && npm run build
+
+# Copy backend source
+COPY backend/ ./backend/
+
+# Create TPU-optimized Android AVD
+RUN echo "no" | ${ANDROID_HOME}/cmdline-tools/latest/bin/avdmanager create avd \
+    -n CloudPhoneTPU \
+    -k "system-images;android-34;google_apis;x86_64" \
+    --force
+
+# Configure TPU-optimized AVD
+RUN mkdir -p /root/.android/avd/CloudPhoneTPU.avd && \
+    echo "avd.ini.encoding=UTF-8" > /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "abi.type=x86_64" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "disk.dataPartition.size=16G" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.accelerometer=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.audioInput=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.battery=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.camera.back=emulated" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.camera.front=emulated" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.cpu.arch=x86_64" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.cpu.ncore=8" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.dPad=no" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.gps=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.gpu.enabled=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.gpu.mode=host" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.keyboard=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.lcd.density=420" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.lcd.height=1920" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.lcd.width=1080" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.mainKeys=no" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.ramSize=8192" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.sdCard=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.sensors.orientation=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.sensors.proximity=yes" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "hw.trackBall=no" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "image.sysdir.1=system-images/android-34/google_apis/x86_64/" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "runtime.network.latency=none" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "runtime.network.speed=full" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini && \
+    echo "vm.heapSize=1024" >> /root/.android/avd/CloudPhoneTPU.avd/config.ini
+
+# Create TPU initialization script
+RUN echo '#!/bin/bash' > /app/init-tpu.sh && \
+    echo 'echo "🚀 Initializing TPU-Accelerated OpenPhone System..."' >> /app/init-tpu.sh && \
+    echo 'echo "📊 System Information:"' >> /app/init-tpu.sh && \
+    echo 'echo "   CPU Cores: $(nproc)"' >> /app/init-tpu.sh && \
+    echo 'echo "   Memory: $(free -h | grep Mem | awk '"'"'{print $2}'"'"')"' >> /app/init-tpu.sh && \
+    echo 'echo "   GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader,nounits 2>/dev/null || echo "Not available")"' >> /app/init-tpu.sh && \
+    echo 'echo "   KVM: $([ -e /dev/kvm ] && echo "✅ Available" || echo "❌ Not available")"' >> /app/init-tpu.sh && \
+    echo '' >> /app/init-tpu.sh && \
+    echo '# Initialize TPU if credentials are available' >> /app/init-tpu.sh && \
+    echo 'if [ -f "/app/credentials/gcp-key.json" ]; then' >> /app/init-tpu.sh && \
+    echo '    echo "🔐 Authenticating with Google Cloud..."' >> /app/init-tpu.sh && \
+    echo '    gcloud auth activate-service-account --key-file=/app/credentials/gcp-key.json' >> /app/init-tpu.sh && \
+    echo '    echo "🧠 Checking TPU availability..."' >> /app/init-tpu.sh && \
+    echo '    if [ ! -z "$TPU_NAME" ]; then' >> /app/init-tpu.sh && \
+    echo '        gcloud compute tpus describe $TPU_NAME --zone=$TPU_ZONE 2>/dev/null && echo "✅ TPU available" || echo "⚠️ TPU not found"' >> /app/init-tpu.sh && \
+    echo '    fi' >> /app/init-tpu.sh && \
+    echo 'else' >> /app/init-tpu.sh && \
+    echo '    echo "⚠️ No GCP credentials found - running without TPU acceleration"' >> /app/init-tpu.sh && \
+    echo 'fi' >> /app/init-tpu.sh && \
+    echo '' >> /app/init-tpu.sh && \
+    echo 'echo "🌐 Starting OpenPhone server..."' >> /app/init-tpu.sh && \
+    echo 'echo "📱 Web Interface: http://localhost:12000"' >> /app/init-tpu.sh && \
+    echo 'echo "📺 VNC Viewer: http://localhost:12000/vnc"' >> /app/init-tpu.sh && \
+    echo 'echo "📚 API Docs: http://localhost:12000/api-docs"' >> /app/init-tpu.sh && \
+    echo 'echo "📊 Monitoring: http://localhost:3000 (Grafana)"' >> /app/init-tpu.sh && \
+    echo 'echo "======================================"' >> /app/init-tpu.sh && \
+    echo 'cd /app/backend' >> /app/init-tpu.sh && \
+    echo 'exec node server.js' >> /app/init-tpu.sh && \
+    chmod +x /app/init-tpu.sh
+
+# Create health check script
+RUN echo '#!/bin/bash' > /app/healthcheck-tpu.sh && \
+    echo 'curl -f http://localhost:12000/api/status > /dev/null 2>&1' >> /app/healthcheck-tpu.sh && \
+    chmod +x /app/healthcheck-tpu.sh
+
+# Expose ports
+EXPOSE 12000 5900 6080 5554-5584
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /app/healthcheck-tpu.sh || exit 1
+
+# Set the TPU-optimized startup command
+CMD ["/app/init-tpu.sh"]
+
+# Add labels for better Docker management
+LABEL maintainer="OpenPhone Team"
+LABEL version="2.1.0-tpu"
+LABEL description="TPU-Accelerated Cloud Android Phone System"
+LABEL com.openphone.features="tpu-acceleration,multi-phone,android-14,vnc-streaming,monitoring,gpu-support"
