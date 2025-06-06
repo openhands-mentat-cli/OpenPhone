@@ -90,9 +90,36 @@ done
 
 # Check for sensitive information patterns
 if command -v grep &> /dev/null; then
-    if grep -r "password\|secret\|api_key\|private_key" --include="*.js" --include="*.json" --include="*.yml" --include="*.yaml" . 2>/dev/null | grep -v node_modules | head -5; then
+    if grep -r "password\|secret\|api_key\|private_key" --include="*.js" --include="*.json" --include="*.yml" --include="*.yaml" . 2>/dev/null | grep -v node_modules | grep -v "secrets.GITHUB_TOKEN" | head -5; then
         echo "⚠️ Potential sensitive information found (review above)"
     fi
+fi
+
+# Check GitHub Actions workflow files
+echo "🔍 Checking GitHub Actions workflows..."
+if [ -d ".github/workflows" ]; then
+    for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+        if [ -f "$workflow" ]; then
+            echo "📋 Checking $workflow..."
+            
+            # Check for deprecated CodeQL action versions
+            if grep -q "github/codeql-action.*@v[12]" "$workflow"; then
+                echo "⚠️ Deprecated CodeQL action version found in $workflow (use @v3)"
+            fi
+            
+            # Check for proper Docker build dependencies
+            if grep -q "trivy-action" "$workflow"; then
+                if ! grep -q "docker/build-push-action" "$workflow"; then
+                    echo "⚠️ Trivy scan without Docker build in $workflow"
+                fi
+            fi
+            
+            # Check for proper image references in security scans
+            if grep -q "image-ref.*test" "$workflow"; then
+                echo "ℹ️ Test image reference found - ensure image exists for scanning"
+            fi
+        fi
+    done
 fi
 
 echo "✅ Pre-commit checks completed"
