@@ -222,23 +222,15 @@ const LoadingSpinner = styled.div`
 
 const CloudAndroidPhone = () => {
   // State management with performance optimization
-  const [phones, setPhones] = useState([
-    { 
-      id: 'phone-1', 
-      name: 'Phone 1', 
-      status: { running: false }, 
-      port: 12000,
-      vncPort: 6080 
-    }
-  ]);
-  const [activePhoneId, setActivePhoneId] = useState('phone-1');
+  const [phones, setPhones] = useState([]);
+  const [activePhoneId, setActivePhoneId] = useState(null);
   const [socket, setSocket] = useState(null);
   const [logs, setLogs] = useState([]);
   const [globalLoading, setGlobalLoading] = useState(false);
 
   // Memoized active phone
   const activePhone = useMemo(() => 
-    phones.find(phone => phone.id === activePhoneId) || phones[0],
+    phones.find(phone => phone.id === activePhoneId) || phones[0] || { id: null, name: 'No Phone', status: { running: false } },
     [phones, activePhoneId]
   );
 
@@ -292,13 +284,28 @@ const CloudAndroidPhone = () => {
     };
   }, [activePhoneId, addLog]);
 
+  // Fetch all phones from API
+  const fetchPhones = useCallback(async () => {
+    try {
+      const response = await axios.get('/api/phones');
+      setPhones(response.data);
+      
+      // Set active phone to first phone if none selected
+      if (!activePhoneId && response.data.length > 0) {
+        setActivePhoneId(response.data[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to fetch phones:', error);
+      addLog('❌ Failed to fetch phones');
+    }
+  }, [activePhoneId, addLog]);
+
   // Fetch status with error handling
   const fetchStatus = useCallback(async (phoneId = activePhoneId) => {
     try {
-      const phone = phones.find(p => p.id === phoneId);
-      if (!phone) return;
+      if (!phoneId) return;
 
-      const response = await axios.get(`/api/status?port=${phone.port}`);
+      const response = await axios.get(`/api/status?phoneId=${phoneId}`);
       setPhones(prev => prev.map(p => 
         p.id === phoneId ? { ...p, status: response.data } : p
       ));
@@ -306,7 +313,7 @@ const CloudAndroidPhone = () => {
       console.error('Failed to fetch status:', error);
       addLog('❌ Failed to fetch status', phoneId);
     }
-  }, [phones, activePhoneId, addLog]);
+  }, [activePhoneId, addLog]);
 
   // Phone management functions
   const startCloudPhone = useCallback(async (phoneId = activePhoneId) => {
@@ -314,12 +321,7 @@ const CloudAndroidPhone = () => {
     addLog('🚀 Starting Cloud Android Phone...', phoneId);
     
     try {
-      const phone = phones.find(p => p.id === phoneId);
-      const response = await axios.post('/api/start', { 
-        phoneId,
-        port: phone.port,
-        vncPort: phone.vncPort 
-      });
+      const response = await axios.post('/api/start', { phoneId });
       
       if (response.data.success) {
         addLog('✅ Cloud Android Phone started successfully', phoneId);
@@ -330,7 +332,7 @@ const CloudAndroidPhone = () => {
     } finally {
       setGlobalLoading(false);
     }
-  }, [phones, activePhoneId, addLog, fetchStatus]);
+  }, [activePhoneId, addLog, fetchStatus]);
 
   const stopCloudPhone = useCallback(async (phoneId = activePhoneId) => {
     setGlobalLoading(true);
@@ -348,6 +350,49 @@ const CloudAndroidPhone = () => {
       setGlobalLoading(false);
     }
   }, [activePhoneId, addLog, fetchStatus]);
+
+  // Create new phone
+  const createPhone = useCallback(async (config) => {
+    setGlobalLoading(true);
+    addLog('📱 Creating new phone...', config.name);
+    
+    try {
+      const response = await axios.post('/api/phones', config);
+      if (response.data.success) {
+        addLog('✅ Phone created successfully', response.data.phone.id);
+        await fetchPhones();
+        setActivePhoneId(response.data.phone.id);
+      }
+    } catch (error) {
+      addLog('❌ Failed to create phone: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setGlobalLoading(false);
+    }
+  }, [addLog, fetchPhones]);
+
+  // Delete phone
+  const deletePhone = useCallback(async (phoneId) => {
+    setGlobalLoading(true);
+    addLog('🗑️ Deleting phone...', phoneId);
+    
+    try {
+      const response = await axios.delete(`/api/phones/${phoneId}`);
+      if (response.data.success) {
+        addLog('✅ Phone deleted successfully', phoneId);
+        await fetchPhones();
+        
+        // Switch to another phone if current active phone was deleted
+        if (activePhoneId === phoneId) {
+          const remainingPhones = phones.filter(p => p.id !== phoneId);
+          setActivePhoneId(remainingPhones.length > 0 ? remainingPhones[0].id : null);
+        }
+      }
+    } catch (error) {
+      addLog('❌ Failed to delete phone: ' + (error.response?.data?.error || error.message), phoneId);
+    } finally {
+      setGlobalLoading(false);
+    }
+  }, [activePhoneId, phones, addLog, fetchPhones]);
 
   // Optimized text sending
   const sendText = useCallback(async (text) => {
@@ -438,48 +483,27 @@ const CloudAndroidPhone = () => {
     }
   }, [activePhoneId, addLog]);
 
-  // Add new phone
+  // Add new phone (simplified - shows modal for creation)
   const addNewPhone = useCallback(() => {
-    const newPhoneId = `phone-${phones.length + 1}`;
-    const newPhone = {
-      id: newPhoneId,
-      name: `Phone ${phones.length + 1}`,
-      status: { running: false },
-      port: 12000 + phones.length,
-      vncPort: 6080 + phones.length
-    };
-    
-    setPhones(prev => [...prev, newPhone]);
-    setActivePhoneId(newPhoneId);
-    addLog('📱 New phone added', newPhoneId);
-  }, [phones.length, addLog]);
+    // This will trigger the phone creation modal in the UI
+    addLog('📱 Opening phone creation dialog...');
+  }, [addLog]);
 
   // Remove phone
   const removePhone = useCallback((phoneId) => {
-    if (phones.length <= 1) {
-      addLog('❌ Cannot remove the last phone', phoneId);
-      return;
-    }
-    
-    setPhones(prev => prev.filter(p => p.id !== phoneId));
-    
-    if (activePhoneId === phoneId) {
-      setActivePhoneId(phones.find(p => p.id !== phoneId)?.id || phones[0].id);
-    }
-    
-    addLog('🗑️ Phone removed', phoneId);
-  }, [phones, activePhoneId, addLog]);
+    deletePhone(phoneId);
+  }, [deletePhone]);
 
-  // Initial status fetch
+  // Initial phones fetch
   useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
+    fetchPhones();
+  }, []);
 
   // Auto-refresh status every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       phones.forEach(phone => {
-        if (phone.status.running) {
+        if (phone.status?.running) {
           fetchStatus(phone.id);
         }
       });
@@ -513,7 +537,7 @@ const CloudAndroidPhone = () => {
               active={phone.id === activePhoneId}
               onClick={() => setActivePhoneId(phone.id)}
             >
-              <StatusDot running={phone.status.running} />
+              <StatusDot running={phone.status?.running} />
               {phone.name}
               {phones.length > 1 && (
                 <span 
@@ -533,9 +557,9 @@ const CloudAndroidPhone = () => {
             ➕ Add Phone
           </AddPhoneButton>
           
-          <StatusIndicator running={activePhone.status.running}>
-            <StatusDot running={activePhone.status.running} />
-            {activePhone.status.running ? 'Online' : 'Offline'}
+          <StatusIndicator running={activePhone.status?.running}>
+            <StatusDot running={activePhone.status?.running} />
+            {activePhone.status?.running ? 'Online' : 'Offline'}
           </StatusIndicator>
         </PhoneManagerContainer>
       </Header>
