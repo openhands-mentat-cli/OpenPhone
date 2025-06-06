@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const { spawn, exec } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const { specs, swaggerUi } = require('./swagger');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,6 +22,12 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../frontend/build')));
+
+// API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
+  customCssUrl: 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui.min.css',
+  customSiteTitle: 'OpenPhone API Documentation'
+}));
 
 // File upload configuration
 const upload = multer({

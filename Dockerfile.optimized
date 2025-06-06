@@ -1,0 +1,168 @@
+# Multi-stage optimized Dockerfile for OpenPhone
+ARG NODE_VERSION=18
+ARG UBUNTU_VERSION=22.04
+
+# Stage 1: Build frontend
+FROM node:${NODE_VERSION}-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Install backend dependencies
+FROM node:${NODE_VERSION}-alpine AS backend-builder
+WORKDIR /app/backend
+COPY backend/package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Stage 3: Final production image
+FROM ubuntu:${UBUNTU_VERSION}
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies in a single layer
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    unzip \
+    openjdk-11-jdk \
+    xvfb \
+    x11vnc \
+    websockify \
+    qemu-kvm \
+    libvirt-daemon-system \
+    libvirt-clients \
+    bridge-utils \
+    cpu-checker \
+    adb \
+    fastboot \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    git \
+    htop \
+    nano \
+    net-tools \
+    procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Set up Android SDK
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV PATH=${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator
+
+# Create Android SDK directory
+RUN mkdir -p ${ANDROID_HOME}
+
+# Download and install Android SDK Command Line Tools
+RUN cd ${ANDROID_HOME} && \
+    wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip && \
+    unzip -q commandlinetools-linux-9477386_latest.zip && \
+    mkdir -p cmdline-tools/latest && \
+    mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true && \
+    rm commandlinetools-linux-9477386_latest.zip
+
+# Accept Android SDK licenses and install packages
+RUN yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses && \
+    ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+    "platform-tools" \
+    "platforms;android-34" \
+    "platforms;android-33" \
+    "platforms;android-32" \
+    "platforms;android-31" \
+    "emulator" \
+    "system-images;android-34;google_apis;x86_64" \
+    "system-images;android-33;google_apis;x86_64" \
+    "system-images;android-32;google_apis;x86_64" \
+    "system-images;android-31;google_apis;x86_64"
+
+# Create working directory
+WORKDIR /app
+
+# Copy built frontend from frontend-builder stage
+COPY --from=frontend-builder /app/frontend/build ./frontend/build
+
+# Copy backend dependencies from backend-builder stage
+COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
+
+# Copy backend source code
+COPY backend/ ./backend/
+
+# Create default Android AVD
+RUN echo "no" | ${ANDROID_HOME}/cmdline-tools/latest/bin/avdmanager create avd \
+    -n CloudPhoneDefault \
+    -k "system-images;android-34;google_apis;x86_64" \
+    --force
+
+# Configure AVD for high performance
+RUN mkdir -p /root/.android/avd/CloudPhoneDefault.avd && \
+    echo "avd.ini.encoding=UTF-8" > /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "abi.type=x86_64" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "disk.dataPartition.size=8G" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.accelerometer=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.audioInput=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.battery=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.camera.back=emulated" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.camera.front=emulated" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.cpu.arch=x86_64" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.cpu.ncore=4" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.dPad=no" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.gps=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.gpu.enabled=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.gpu.mode=swiftshader_indirect" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.keyboard=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.lcd.density=420" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.lcd.height=1920" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.lcd.width=1080" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.mainKeys=no" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.ramSize=4096" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.sdCard=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.sensors.orientation=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.sensors.proximity=yes" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "hw.trackBall=no" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "image.sysdir.1=system-images/android-34/google_apis/x86_64/" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "runtime.network.latency=none" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "runtime.network.speed=full" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini && \
+    echo "vm.heapSize=512" >> /root/.android/avd/CloudPhoneDefault.avd/config.ini
+
+# Create optimized startup script
+RUN echo '#!/bin/bash' > /app/start-optimized.sh && \
+    echo 'echo "🚀 Starting Optimized OpenPhone System..."' >> /app/start-optimized.sh && \
+    echo 'echo "📊 System Information:"' >> /app/start-optimized.sh && \
+    echo 'echo "   CPU Cores: $(nproc)"' >> /app/start-optimized.sh && \
+    echo 'echo "   Memory: $(free -h | grep Mem | awk '"'"'{print $2}'"'"')"' >> /app/start-optimized.sh && \
+    echo 'echo "   Disk: $(df -h / | tail -1 | awk '"'"'{print $4}'"'"') available"' >> /app/start-optimized.sh && \
+    echo 'echo "   KVM: $([ -e /dev/kvm ] && echo "✅ Available" || echo "❌ Not available")"' >> /app/start-optimized.sh && \
+    echo 'echo "🌐 Server starting on port 12000..."' >> /app/start-optimized.sh && \
+    echo 'echo "📱 Web Interface: http://localhost:12000"' >> /app/start-optimized.sh && \
+    echo 'echo "📺 VNC Viewer: http://localhost:12000/vnc"' >> /app/start-optimized.sh && \
+    echo 'echo "📚 API Docs: http://localhost:12000/api-docs"' >> /app/start-optimized.sh && \
+    echo 'echo "======================================"' >> /app/start-optimized.sh && \
+    echo 'cd /app/backend' >> /app/start-optimized.sh && \
+    echo 'exec node server.js' >> /app/start-optimized.sh && \
+    chmod +x /app/start-optimized.sh
+
+# Create health check script
+RUN echo '#!/bin/bash' > /app/healthcheck.sh && \
+    echo 'curl -f http://localhost:12000/api/status > /dev/null 2>&1' >> /app/healthcheck.sh && \
+    chmod +x /app/healthcheck.sh
+
+# Expose ports
+EXPOSE 12000 5900 6080
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /app/healthcheck.sh || exit 1
+
+# Set the optimized startup command
+CMD ["/app/start-optimized.sh"]
+
+# Add labels for better Docker management
+LABEL maintainer="OpenPhone Team"
+LABEL version="2.0.0"
+LABEL description="Production-ready Cloud Android Phone System"
+LABEL com.openphone.features="multi-phone,android-14,vnc-streaming,batch-operations,monitoring,device-profiles"
