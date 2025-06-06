@@ -51,10 +51,11 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: 🏗️ Build Docker image
+    - name: 🏗️ Build and push regular Docker image
       uses: docker/build-push-action@v5
       with:
         context: .
+        file: ./Dockerfile
         platforms: linux/amd64
         push: ${{ github.event_name != 'pull_request' || github.event.inputs.push_to_registry == 'true' }}
         tags: ${{ steps.meta.outputs.tags }}
@@ -63,6 +64,36 @@ jobs:
         cache-to: type=gha,mode=max
         build-args: |
           BUILDKIT_INLINE_CACHE=1
+
+    - name: 🧠 Build and push TPU-optimized Docker image
+      if: github.event_name != 'pull_request' || github.event.inputs.push_to_registry == 'true'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.tpu
+        platforms: linux/amd64
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:tpu-latest
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:tpu-${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: 🏗️ Build and push optimized production image
+      if: github.event_name != 'pull_request' || github.event.inputs.push_to_registry == 'true'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.optimized
+        platforms: linux/amd64
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:optimized
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:optimized-${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
 
     - name: 🧪 Test Docker image
       run: |
@@ -123,14 +154,21 @@ jobs:
         echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Usage:**" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-        echo "# Pull and run the image" >> $GITHUB_STEP_SUMMARY
-        echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
-        echo "docker run -p 12000:12000 -p 5900:5900 -p 6080:6080 --privileged ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+        echo "**Available Images:**" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "🏃 Regular: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+        echo "🧠 TPU-Optimized: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:tpu-latest" >> $GITHUB_STEP_SUMMARY
+        echo "🏭 Production: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:optimized" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "# Or use docker-compose" >> $GITHUB_STEP_SUMMARY
-        echo "docker-compose up" >> $GITHUB_STEP_SUMMARY
+        echo "**Quick Start:**" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+        echo "# Easy setup with interactive script" >> $GITHUB_STEP_SUMMARY
+        echo "curl -fsSL https://raw.githubusercontent.com/openhands-mentat-cli/OpenPhone/main/start-openphone.sh | bash" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Or manual setup" >> $GITHUB_STEP_SUMMARY
+        echo "git clone https://github.com/openhands-mentat-cli/OpenPhone.git" >> $GITHUB_STEP_SUMMARY
+        echo "cd OpenPhone && ./start-openphone.sh" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Access Points:**" >> $GITHUB_STEP_SUMMARY

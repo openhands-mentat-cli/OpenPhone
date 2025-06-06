@@ -2,9 +2,8 @@ version: '3.8'
 
 services:
   openphone-tpu:
-    build:
-      context: .
-      dockerfile: Dockerfile.tpu
+    image: ghcr.io/openhands-mentat-cli/openphone/openphone:tpu-latest
+    pull_policy: always
     ports:
       - "12000:12000"
       - "5900:5900"  
