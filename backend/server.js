@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const { spawn, exec } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const { specs, swaggerUi } = require('./swagger');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,6 +22,12 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../frontend/build')));
+
+// API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
+  customCssUrl: 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui.min.css',
+  customSiteTitle: 'OpenPhone API Documentation'
+}));
 
 // File upload configuration
 const upload = multer({
@@ -614,77 +621,187 @@ tag.id=google_apis_playstore
   }
 }
 
-// Initialize cloud phone
-const cloudPhone = new CloudAndroidPhone();
+// Initialize phone manager
+const phoneManager = new PhoneManager();
 
-// API Routes
-app.get('/api/status', (req, res) => {
-  res.json(cloudPhone.getStatus());
+// Create default phone on startup
+const defaultPhone = phoneManager.createPhone({
+  name: 'Phone 1',
+  androidVersion: 'android-34',
+  ram: 4096,
+  storage: 8192,
+  resolution: '1080x1920',
+  density: 420
 });
 
+// API Routes
+
+// Get all phones
+app.get('/api/phones', (req, res) => {
+  const phones = phoneManager.getAllPhones().map(phone => ({
+    id: phone.phoneId,
+    name: phone.name,
+    status: phone.getStatus(),
+    emulatorPort: phone.emulatorPort,
+    vncPort: phone.vncPort,
+    websockifyPort: phone.websockifyPort
+  }));
+  res.json(phones);
+});
+
+// Create new phone
+app.post('/api/phones', (req, res) => {
+  try {
+    const config = req.body;
+    const phone = phoneManager.createPhone(config);
+    res.json({ 
+      success: true, 
+      phone: {
+        id: phone.phoneId,
+        name: phone.name,
+        status: phone.getStatus(),
+        emulatorPort: phone.emulatorPort,
+        vncPort: phone.vncPort,
+        websockifyPort: phone.websockifyPort
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete phone
+app.delete('/api/phones/:id', (req, res) => {
+  try {
+    const phoneId = req.params.id;
+    const success = phoneManager.deletePhone(phoneId);
+    if (success) {
+      res.json({ success: true, message: 'Phone deleted successfully' });
+    } else {
+      res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get phone status (supports both single phone and multi-phone APIs)
+app.get('/api/status', (req, res) => {
+  const phoneId = req.query.phoneId || 'phone-1';
+  const phone = phoneManager.getPhone(phoneId);
+  
+  if (!phone) {
+    return res.status(404).json({ success: false, error: 'Phone not found' });
+  }
+  
+  res.json(phone.getStatus());
+});
+
+// Start phone
 app.post('/api/start', async (req, res) => {
   try {
-    await cloudPhone.startCloudPhone();
+    const phoneId = req.body.phoneId || 'phone-1';
+    const phone = phoneManager.getPhone(phoneId);
+    
+    if (!phone) {
+      return res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+    
+    await phone.startCloudPhone();
     res.json({ success: true, message: 'Cloud Android phone started successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// Stop phone
 app.post('/api/stop', async (req, res) => {
   try {
-    await cloudPhone.stopCloudPhone();
+    const phoneId = req.body.phoneId || 'phone-1';
+    const phone = phoneManager.getPhone(phoneId);
+    
+    if (!phone) {
+      return res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+    
+    await phone.stopCloudPhone();
     res.json({ success: true, message: 'Cloud Android phone stopped' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// Send text
 app.post('/api/send-text', async (req, res) => {
   try {
-    const { text } = req.body;
+    const { text, phoneId } = req.body;
     if (!text) {
       return res.status(400).json({ success: false, error: 'Text is required' });
     }
     
-    await cloudPhone.sendText(text);
+    const phone = phoneManager.getPhone(phoneId || 'phone-1');
+    if (!phone) {
+      return res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+    
+    await phone.sendText(text);
     res.json({ success: true, message: 'Text sent to Android phone' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// Send tap
 app.post('/api/tap', async (req, res) => {
   try {
-    const { x, y } = req.body;
+    const { x, y, phoneId } = req.body;
     if (x === undefined || y === undefined) {
       return res.status(400).json({ success: false, error: 'x and y coordinates are required' });
     }
     
-    await cloudPhone.sendTap(x, y);
+    const phone = phoneManager.getPhone(phoneId || 'phone-1');
+    if (!phone) {
+      return res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+    
+    await phone.sendTap(x, y);
     res.json({ success: true, message: 'Tap sent to Android phone' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// Send key event
 app.post('/api/key', async (req, res) => {
   try {
-    const { keycode } = req.body;
+    const { keycode, phoneId } = req.body;
     if (!keycode) {
       return res.status(400).json({ success: false, error: 'Keycode is required' });
     }
     
-    await cloudPhone.sendKeyEvent(keycode);
+    const phone = phoneManager.getPhone(phoneId || 'phone-1');
+    if (!phone) {
+      return res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+    
+    await phone.sendKeyEvent(keycode);
     res.json({ success: true, message: 'Key event sent to Android phone' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// Get screenshot
 app.get('/api/screenshot', async (req, res) => {
   try {
-    const filename = await cloudPhone.getScreenshot();
+    const phoneId = req.query.phoneId || 'phone-1';
+    const phone = phoneManager.getPhone(phoneId);
+    
+    if (!phone) {
+      return res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+    
+    const filename = await phone.getScreenshot();
     res.sendFile(path.resolve(filename), (err) => {
       if (!err) {
         fs.remove(filename).catch(() => {});
@@ -697,7 +814,37 @@ app.get('/api/screenshot', async (req, res) => {
 
 // VNC viewer endpoint
 app.get('/vnc', (req, res) => {
-  const status = cloudPhone.getStatus();
+  const phoneId = req.query.phone || 'phone-1';
+  const phone = phoneManager.getPhone(phoneId);
+  
+  if (!phone) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>Cloud Android Phone</title>
+          <style>
+              body { font-family: Arial; text-align: center; padding: 50px; background: #f0f0f0; }
+              .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+              h1 { color: #333; }
+              .status { color: #e74c3c; font-size: 18px; margin: 20px 0; }
+              .button { display: inline-block; padding: 12px 24px; background: #3498db; color: white; text-decoration: none; border-radius: 5px; margin: 10px; }
+              .button:hover { background: #2980b9; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <h1>📱 Cloud Android Phone</h1>
+              <div class="status">❌ Phone not found</div>
+              <p>The requested phone does not exist.</p>
+              <a href="/" class="button">Go to Main Interface</a>
+          </div>
+      </body>
+      </html>
+    `);
+  }
+
+  const status = phone.getStatus();
   
   if (!status.running) {
     return res.send(`
@@ -763,7 +910,7 @@ app.get('/vnc', (req, res) => {
     </head>
     <body>
         <div class="controls">
-            <h3>📱 Cloud Android Phone</h3>
+            <h3>📱 ${phone.name}</h3>
             <div>Resolution: ${status.screenWidth}x${status.screenHeight}</div>
             <div>Status: <span style="color: #4CAF50;">🟢 Running</span></div>
             <div style="margin: 10px 0;">
@@ -789,14 +936,21 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    if (!cloudPhone.isRunning) {
+    const phoneId = req.body.phoneId || 'phone-1';
+    const phone = phoneManager.getPhone(phoneId);
+    
+    if (!phone) {
+      return res.status(404).json({ success: false, error: 'Phone not found' });
+    }
+
+    if (!phone.isRunning) {
       return res.status(400).json({ success: false, error: 'Cloud phone not running' });
     }
 
     // Copy file to Android device
     const androidPath = `/sdcard/Download/${req.file.originalname}`;
     
-    exec(`${cloudPhone.androidSdkPath}/platform-tools/adb -s emulator-${cloudPhone.emulatorPort} push ${req.file.path} ${androidPath}`, (error) => {
+    exec(`${phone.androidSdkPath}/platform-tools/adb -s emulator-${phone.emulatorPort} push ${req.file.path} ${androidPath}`, (error) => {
       // Clean up uploaded file
       fs.remove(req.file.path);
       
@@ -819,13 +973,23 @@ io.on('connection', (socket) => {
     console.log('🔌 Client disconnected:', socket.id);
   });
 
-  socket.on('get-status', () => {
-    socket.emit('status-update', cloudPhone.getStatus());
+  socket.on('get-status', (data) => {
+    const phoneId = data?.phoneId || 'phone-1';
+    const phone = phoneManager.getPhone(phoneId);
+    if (phone) {
+      socket.emit('status-update', phone.getStatus());
+    }
   });
 
   socket.on('send-text', async (data) => {
     try {
-      await cloudPhone.sendText(data.text);
+      const phoneId = data.phoneId || 'phone-1';
+      const phone = phoneManager.getPhone(phoneId);
+      if (!phone) {
+        socket.emit('text-sent', { success: false, error: 'Phone not found' });
+        return;
+      }
+      await phone.sendText(data.text);
       socket.emit('text-sent', { success: true });
     } catch (error) {
       socket.emit('text-sent', { success: false, error: error.message });
@@ -834,7 +998,13 @@ io.on('connection', (socket) => {
 
   socket.on('send-tap', async (data) => {
     try {
-      await cloudPhone.sendTap(data.x, data.y);
+      const phoneId = data.phoneId || 'phone-1';
+      const phone = phoneManager.getPhone(phoneId);
+      if (!phone) {
+        socket.emit('tap-sent', { success: false, error: 'Phone not found' });
+        return;
+      }
+      await phone.sendTap(data.x, data.y);
       socket.emit('tap-sent', { success: true });
     } catch (error) {
       socket.emit('tap-sent', { success: false, error: error.message });
@@ -913,12 +1083,22 @@ server.listen(PORT, '0.0.0.0', () => {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('🛑 Shutting down gracefully...');
-  await cloudPhone.stopCloudPhone();
+  const phones = phoneManager.getAllPhones();
+  for (const phone of phones) {
+    if (phone.isRunning) {
+      await phone.stopCloudPhone();
+    }
+  }
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('🛑 Shutting down gracefully...');
-  await cloudPhone.stopCloudPhone();
+  const phones = phoneManager.getAllPhones();
+  for (const phone of phones) {
+    if (phone.isRunning) {
+      await phone.stopCloudPhone();
+    }
+  }
   process.exit(0);
 });
