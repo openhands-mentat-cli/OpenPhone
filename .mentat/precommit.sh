@@ -6,14 +6,45 @@ echo "🔧 Running pre-commit checks..."
 if command -v docker &> /dev/null; then
     echo "🐳 Validating Docker build..."
     
-    # Test Docker build (dry run)
+    # Test Docker build syntax
     if docker build --dry-run . > /dev/null 2>&1; then
-        echo "✅ Docker build validation passed"
+        echo "✅ Docker build syntax validation passed"
     else
-        echo "❌ Docker build validation failed"
+        echo "❌ Docker build syntax validation failed"
         echo "🔧 Testing with docker-compose config..."
         if command -v docker-compose &> /dev/null; then
             docker-compose config > /dev/null 2>&1 || echo "⚠️ docker-compose.yml may have issues"
+        fi
+    fi
+    
+    # Validate Dockerfile content
+    echo "🔍 Checking Dockerfile content..."
+    if [ -f "Dockerfile" ]; then
+        # Check for common issues
+        if grep -q "COPY.*package.*json" Dockerfile; then
+            echo "✅ Package files copied before npm install"
+        else
+            echo "⚠️ Consider copying package files before npm install for better caching"
+        fi
+        
+        if grep -q "npm install.*--production\|npm ci" Dockerfile; then
+            echo "✅ Production npm install detected"
+        else
+            echo "⚠️ Consider using npm ci or npm install --production for faster builds"
+        fi
+        
+        # Check if EXPOSE directive exists
+        if grep -q "EXPOSE" Dockerfile; then
+            echo "✅ EXPOSE directive found"
+        else
+            echo "⚠️ No EXPOSE directive found - consider adding port exposure"
+        fi
+        
+        # Check for health check
+        if grep -q "HEALTHCHECK\|healthcheck" Dockerfile; then
+            echo "✅ Health check configuration found"
+        else
+            echo "ℹ️ Consider adding HEALTHCHECK for better monitoring"
         fi
     fi
 else
