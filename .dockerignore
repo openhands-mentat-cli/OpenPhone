@@ -1,0 +1,51 @@
+# Node modules
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Build outputs
+frontend/build/
+backend/dist/
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# Uploads
+uploads/
+
+# Android SDK (will be downloaded in container)
+android-sdk/
+
+# Service account credentials
+gcp-service-account.json
+*.json
+
+# Documentation
+README.md
+docs/

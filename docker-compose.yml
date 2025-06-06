@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  openphone:
+    build: .
+    container_name: cloud-android-phone
+    ports:
+      - "12000:12000"  # Web interface
+      - "5900:5900"    # VNC port
+      - "6080:6080"    # WebSocket VNC proxy
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - android_data:/root/.android
+      - uploads:/app/uploads
+    environment:
+      - DISPLAY=:99
+      - ANDROID_HOME=/opt/android-sdk
+      - ANDROID_SDK_ROOT=/opt/android-sdk
+    privileged: true
+    devices:
+      - /dev/kvm:/dev/kvm
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:12000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  android_data:
+    driver: local
+  uploads:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
