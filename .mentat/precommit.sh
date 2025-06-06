@@ -115,8 +115,15 @@ if [ -d ".github/workflows" ]; then
             fi
             
             # Check for proper image references in security scans
-            if grep -q "image-ref.*test" "$workflow"; then
-                echo "ℹ️ Test image reference found - ensure image exists for scanning"
+            if grep -q "image-ref.*test\|image-ref.*scan" "$workflow"; then
+                echo "ℹ️ Test/scan image reference found - ensure image exists for scanning"
+            fi
+            
+            # Check if Docker build has load: true when needed for scanning
+            if grep -q "trivy-action" "$workflow"; then
+                if grep -q "docker/build-push-action" "$workflow" && ! grep -q "load: true" "$workflow"; then
+                    echo "⚠️ Docker build for scanning should include 'load: true' to make image available locally"
+                fi
             fi
         fi
     done
